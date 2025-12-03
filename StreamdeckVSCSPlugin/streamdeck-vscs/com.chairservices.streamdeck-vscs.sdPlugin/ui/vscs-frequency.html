@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>VSCS Frequency</title>
+    <script>
+        const api = "http://127.0.0.1:18084/state";
+
+        window.addEventListener("DOMContentLoaded", () => {
+            load();
+            document.getElementById("freqSelect").addEventListener("change", onChange);
+        });
+
+        async function load() {
+            try {
+                const res = await fetch(api);
+                const state = await res.json();
+                const select = document.getElementById("freqSelect");
+                select.innerHTML = "";
+                state.frequencies.forEach(f => {
+                    const opt = document.createElement("option");
+                    const mhz = (f.frequency / 1000).toFixed(3);
+                    opt.value = f.id;
+                    opt.textContent = `${f.name || mhz} (${mhz})`;
+                    select.appendChild(opt);
+                });
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        function onChange(e) {
+            const payload = { targetId: e.target.value };
+            if (typeof sendToPlugin === "function") {
+                sendToPlugin(payload);
+            } else {
+                const ev = new CustomEvent("sendToPlugin", { detail: payload });
+                document.dispatchEvent(ev);
+            }
+        }
+    </script>
+</head>
+<body>
+    <sdpi-item label="Frequency">
+        <select id="freqSelect" class="sdpi-item-value"></select>
+    </sdpi-item>
+</body>
+</html>

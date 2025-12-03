@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>VSCS Line</title>
+	<style>
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			margin: 12px;
+		}
+		#status {
+			color: #888;
+			font-size: 12px;
+			margin-top: 6px;
+		}
+	</style>
+</head>
+<body>
+	<sdpi-item label="Line Assignment">
+		<select id="lineSelect" class="sdpi-item-value">
+			<option value="">Select line...</option>
+		</select>
+	</sdpi-item>
+	<div id="status"></div>
+
+	<script>
+	(() => {
+		let uuid;
+		let websocket;
+		let actionInfo;
+		let options = [];
+		let fallbackTimer;
+		let selectEl;
+		let statusEl;
+
+		function ensureElements() {
+			selectEl = selectEl || document.getElementById("lineSelect");
+			statusEl = statusEl || document.getElementById("status");
+		}
+
+		function init() {
+			ensureElements();
+			selectEl.addEventListener("change", handleChange);
+			setStatus("Waiting for Stream Deck...");
+		}
+
+		window.connectElgatoStreamDeckSocket = function(port, inUuid, registerEvent, info, inActionInfo) {
+			ensureElements();
+			uuid = inUuid;
+			actionInfo = JSON.parse(inActionInfo || "{}");
+			websocket = new WebSocket(`ws://127.0.0.1:${port}`);
+
+			websocket.onopen = () => {
+				websocket.send(JSON.stringify({ event: registerEvent, uuid }));
+				websocket.send(JSON.stringify({ event: "getSettings", context: uuid }));
+				requestOptions();
+			};
+
+			websocket.onmessage = handleMessage;
+			websocket.onerror = () => setStatus("Connection error. Check Stream Deck.");
+
+			applySettings(actionInfo?.payload?.settings);
+		};
+
+		document.addEventListener("DOMContentLoaded", init);
+
+		function handleMessage(ev) {
+			let msg;
+			try {
+				msg = JSON.parse(ev.data);
+			} catch {
+				return;
+			}
+
+			if (msg.event === "sendToPropertyInspector" && msg.payload?.type === "options") {
+				useOptions(msg.payload.options || []);
+			}
+
+			if (msg.event === "didReceiveSettings") {
+				applySettings(msg.payload?.settings);
+			}
+		}
+
+		function handleChange(ev) {
+			const targetId = ev.target.value || null;
+			saveSettings({ targetId });
+			sendToPlugin({ type: "setTarget", targetId });
+		}
+
+		function requestOptions() {
+			setStatus("Loading VSCS lines…");
+			sendToPlugin({ type: "requestOptions" });
+			if (fallbackTimer) clearTimeout(fallbackTimer);
+			fallbackTimer = setTimeout(loadFallbackOptions, 750);
+		}
+
+		async function loadFallbackOptions() {
+			try {
+				const res = await fetch("http://127.0.0.1:18084/state");
+				const state = await res.json();
+				useOptions(buildOptions(state?.lines || []));
+			} catch (err) {
+				setStatus("Unable to load VSCS state.");
+				console.error(err);
+			}
+		}
+
+		function useOptions(next) {
+			options = next || [];
+			renderOptions();
+			setStatus(options.length ? "" : "No lines reported by VSCS.");
+		}
+
+		function renderOptions() {
+			const current = selectEl.value || "";
+			selectEl.innerHTML = "";
+
+			const seen = new Set();
+			options.forEach((opt) => {
+				if (!opt || seen.has(opt.id)) return;
+				seen.add(opt.id);
+				const el = document.createElement("option");
+				el.value = opt.id;
+				el.textContent = opt.detail ? `${opt.label} — ${opt.detail}` : opt.label;
+				selectEl.appendChild(el);
+			});
+
+			const desired = (actionInfo?.payload?.settings?.targetId ?? current ?? "") || "";
+			selectEl.value = desired;
+		}
+
+		function applySettings(settings) {
+			const targetId = settings?.targetId ?? "";
+			if (selectEl) {
+				selectEl.value = targetId;
+			}
+		}
+
+		function saveSettings(settings) {
+			if (websocket && websocket.readyState === WebSocket.OPEN) {
+				websocket.send(JSON.stringify({ event: "setSettings", context: uuid, payload: settings }));
+			}
+		}
+
+		function sendToPlugin(payload) {
+			if (websocket && websocket.readyState === WebSocket.OPEN) {
+				websocket.send(JSON.stringify({ event: "sendToPlugin", context: uuid, payload }));
+			}
+		}
+
+		function setStatus(text) {
+			if (!statusEl) return;
+			statusEl.textContent = text || "";
+		}
+
+		function buildOptions(lines) {
+			return [...lines]
+				.sort(lineSorter)
+				.map((line) => {
+					const station = stationCode(line.name);
+					return {
+						id: line.id,
+						label: `${station} - ${friendlyName(line.name)}`,
+						detail: [line.type || "Line", line.state || ""].filter(Boolean).join(" • "),
+						station,
+						type: line.type || "Line"
+					};
+				});
+		}
+
+		function lineSorter(a, b) {
+			const priority = (line) => {
+				const type = (line.type || "").toLowerCase();
+				if (type.includes("hot")) return 0;
+				if (type.includes("cold")) return 1;
+				return 2;
+			};
+			const diff = priority(a) - priority(b);
+			if (diff !== 0) return diff;
+			return friendlyName(a.name).localeCompare(friendlyName(b.name));
+		}
+
+		function stationCode(name) {
+			const parts = (name || "").split("_");
+			if (parts.length >= 2 && parts[1].length >= 3) return parts[1].substring(0, 3).toUpperCase();
+			if (parts.length >= 2 && parts[1].length >= 1) return (parts[1][0] + (parts[0][0] || "") + (parts[0][1] || "")).toUpperCase();
+			const match = name.match(/^([A-Za-z]{2})_?([A-Za-z])/);
+			if (match) return (match[1] + match[2]).toUpperCase();
+			return name.split("_")[0]?.slice(0, 3).toUpperCase() || name.toUpperCase();
+		}
+
+		function friendlyName(name) {
+			return (name || "")
+				.replace(/_/g, " ")
+				.split(" ")
+				.map((w) => (w.length ? w[0].toUpperCase() + w.slice(1).toLowerCase() : ""))
+				.join(" ")
+				.trim();
+		}
+	})();
+	</script>
+</body>
+</html>

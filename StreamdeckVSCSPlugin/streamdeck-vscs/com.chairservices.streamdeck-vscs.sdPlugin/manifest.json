@@ -1,0 +1,62 @@
+{
+	"Name": "Streamdeck VSCS",
+	"Version": "0.1.0.0",
+	"Author": "Chairservices",
+	"Actions": [
+		{
+			"Name": "VSCS Line",
+			"UUID": "com.chairservices.streamdeck-vscs.line",
+			"Icon": "imgs/actions/counter/icon",
+			"Tooltip": "Toggle a VSCS line (Hotline/Coldline/Monitor).",
+			"PropertyInspectorPath": "ui/vscs-line.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/counter/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "VSCS Mute",
+			"UUID": "com.chairservices.streamdeck-vscs.toggle",
+			"Icon": "imgs/actions/counter/icon",
+			"Tooltip": "Toggle VSCS microphone mute.",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/counter/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		}
+	],
+	"Category": "Streamdeck VSCS",
+	"CategoryIcon": "imgs/plugin/category-icon",
+	"CodePath": "bin/plugin.js",
+	"Description": "Controls VSCS from Streamdeck",
+	"Icon": "imgs/plugin/marketplace",
+	"SDKVersion": 2,
+	"Software": {
+		"MinimumVersion": "6.5"
+	},
+	"OS": [
+		{
+			"Platform": "mac",
+			"MinimumVersion": "12"
+		},
+		{
+			"Platform": "windows",
+			"MinimumVersion": "10"
+		}
+	],
+	"Nodejs": {
+		"Version": "20",
+		"Debug": "enabled"
+	},
+	"UUID": "com.chairservices.streamdeck-vscs"
+}

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>VSCS Toggle</title>
+    <script>
+        window.addEventListener("DOMContentLoaded", () => {
+            document.getElementById("toggleSelect").addEventListener("change", onChange);
+        });
+
+        function onChange(e) {
+            const payload = { target: e.target.value };
+            if (typeof sendToPlugin === "function") {
+                sendToPlugin(payload);
+            } else {
+                const ev = new CustomEvent("sendToPlugin", { detail: payload });
+                document.dispatchEvent(ev);
+            }
+        }
+    </script>
+</head>
+<body>
+    <sdpi-item label="Toggle">
+        <select id="toggleSelect" class="sdpi-item-value">
+            <option value="group">Group Frequencies</option>
+            <option value="allspeaker">All to Speaker</option>
+            <option value="tonesspeaker">Tones to Speaker</option>
+            <option value="mute">Mute Mic</option>
+            <option value="atis">ATIS Monitor</option>
+        </select>
+    </sdpi-item>
+</body>
+</html>
