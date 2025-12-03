@@ -1,5 +1,17 @@
 # StreamdeckVSCS
 
+## How to use
+- Install with the bundled `StreamdeckVSCSInstaller.exe` (copies the vatSys plugin and triggers the Stream Deck install prompt).
+- In Stream Deck, add the “VSCS Line” action to a key.
+- Each line button can be set to **Auto-detect** or **Manual pick**:
+  - **Auto-detect + ID**: Assign a unique numeric ID (1–20) to each button. As VSCS lines appear, the plugin maps one line per ID (hotlines first, then coldlines). This keeps buttons stable even when lines change order.
+  - **Manual**: Pick a specific line from the detected list. The button is locked to that line only.
+- Buttons reflect VSCS status without opening the VSCS window:
+  - Hotlines: idle yellow; active green.
+  - Coldlines: idle blue; pending flashes purple/blue; active solid purple.
+
+## How to build
+
 The repo contains the bridge plugin that needs to be built and added to vatSys, as well as the Streamdeck Plugin which needs to be packaged for updates or initial deployment.
 
 ## Building the vatSys Plugin
