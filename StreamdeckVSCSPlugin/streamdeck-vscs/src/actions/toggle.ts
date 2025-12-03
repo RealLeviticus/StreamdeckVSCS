@@ -56,19 +56,15 @@ function stopPolling(context: string) {
 
 function makeMuteSvg(muted: boolean): string {
 	const bg = "#7e8686";
-	const border = muted ? "#EBEB00" : "#7e8686";
-	const textColor = "#00196a";
-	const line1 = "Coord";
-	const line2 = muted ? "MUTE" : "";
-	const underline = muted
-		? `<line x1="28" y1="96" x2="116" y2="96" stroke="${textColor}" stroke-width="4" />`
-		: "";
+	const border = muted ? "#ebeb00" : "#0076ff";
+	const textPrimary = "#0b1f73";
+	const textSecondary = muted ? "#ebeb00" : "#f7f7f7";
+	const line1 = "COORD";
+	const line2 = muted ? "MUTE" : "LIVE";
 	return `
 <svg xmlns="http://www.w3.org/2000/svg" width="144" height="144">
-  <rect x="4" y="4" width="136" height="136" rx="10" ry="10" fill="${border}" />
-  <rect x="8" y="8" width="128" height="128" rx="8" ry="8" fill="${bg}" />
-  <text x="50%" y="48%" fill="${textColor}" font-family="Arial" font-size="22" text-anchor="middle" dominant-baseline="middle">${line1}</text>
-  <text x="50%" y="68%" fill="${textColor}" font-family="Arial" font-size="20" text-anchor="middle" dominant-baseline="middle">${line2}</text>
-  ${underline}
+  <rect x="6" y="6" width="132" height="132" rx="16" ry="16" fill="${bg}" stroke="${border}" stroke-width="8"/>
+  <text x="50%" y="50%" fill="${textPrimary}" font-family="Arial" font-size="30" font-weight="bold" text-anchor="middle" dominant-baseline="central">${line1}</text>
+  <text x="50%" y="74%" fill="${textSecondary}" font-family="Arial" font-size="24" font-weight="bold" text-anchor="middle" dominant-baseline="central">${line2}</text>
 </svg>`;
 }

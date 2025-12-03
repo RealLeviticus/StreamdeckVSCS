@@ -1,7 +1,7 @@
 {
-	"Name": "Streamdeck VSCS",
+	"Name": "StreamdeckVSCS",
 	"Version": "0.1.0.0",
-	"Author": "Chairservices",
+	"Author": "Leviticus",
 	"Actions": [
 		{
 			"Name": "VSCS Line",
@@ -35,7 +35,7 @@
 			]
 		}
 	],
-	"Category": "Streamdeck VSCS",
+	"Category": "StreamdeckVSCS",
 	"CategoryIcon": "imgs/plugin/category-icon",
 	"CodePath": "bin/plugin.js",
 	"Description": "Controls VSCS from Streamdeck",

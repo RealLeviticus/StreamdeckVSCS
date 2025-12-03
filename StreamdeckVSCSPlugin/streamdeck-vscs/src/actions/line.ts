@@ -9,12 +9,23 @@ import {
 } from "@elgato/streamdeck";
 import { fetchState, toggleLine, VscsLine } from "../bridge";
 
+const ROLE_TOKENS = new Set(["CTR", "CENTER", "CENTRE", "APP", "APCH", "APPROACH", "DEP", "DEPARTURE", "TWR", "TOWER", "ACC", "AREA"]);
+const GROUND_TOKENS = new Set(["GND", "GROUND", "GRND"]);
+const LOCATION_ALIASES: Record<string, { code?: string; label?: string }> = {
+	MUN: { code: "MUN", label: "Mungo" },
+	SY: { label: "Sydney" }
+};
+
 type LineSettings = {
 	targetId?: string | null; // manual selection from PI
+	autoAssignId?: string | null; // numeric "slot" chosen in PI for auto-mapping
+	mode?: "auto" | "manual";
 };
 
 const pollers: Record<string, NodeJS.Timeout> = {};
 const settingsByContext: Record<string, LineSettings> = {};
+const resolvedTargetsByContext: Record<string, string | undefined> = {};
+const autoAssignments: Record<string, string> = {}; // slot -> line id
 
 @action({ UUID: "com.chairservices.streamdeck-vscs.line" })
 export class VscsLineAction extends SingletonAction<LineSettings> {
@@ -33,16 +44,22 @@ export class VscsLineAction extends SingletonAction<LineSettings> {
 
 	override async onSendToPlugin(ev: SendToPluginEvent<Partial<LineSettings>, LineSettings>): Promise<void> {
 		const ctx = getContext(ev);
-		const incoming = ev.payload as Partial<LineSettings>;
+		const incoming = ev.payload as Partial<LineSettings> & { type?: string };
 		if (!incoming) return;
-		const next = { ...(settingsByContext[ctx] ?? {}), ...incoming };
+
+		if (incoming.type === "requestOptions") {
+			await sendOptionsToPi(ev);
+			return;
+		}
+
+		const next = mergeSettings(settingsByContext[ctx], incoming);
 		settingsByContext[ctx] = next;
 		await ev.action.setSettings(next);
 		await this.refresh(ctx, ev.action);
 	}
 
 	override async onKeyDown(ev: KeyDownEvent<LineSettings>): Promise<void> {
-		const targetId = settingsByContext[getContext(ev)]?.targetId;
+		const targetId = resolvedTargetsByContext[getContext(ev)] ?? settingsByContext[getContext(ev)]?.targetId;
 		if (!targetId) return;
 		try {
 			await toggleLine(targetId);
@@ -59,17 +76,22 @@ export class VscsLineAction extends SingletonAction<LineSettings> {
 			delete pollers[ctx];
 		}
 		delete settingsByContext[ctx];
+		delete resolvedTargetsByContext[ctx];
 	}
 
 	private async refresh(ctx: string, action: any) {
-		const targetId = settingsByContext[ctx]?.targetId;
+		const settings = settingsByContext[ctx] ?? {};
+		const { list: lines, linesById } = await fetchLines();
+		updateAutoAssignments(lines);
+
+		const targetId = resolveTargetId(settings, linesById);
+		resolvedTargetsByContext[ctx] = targetId ?? undefined;
 		if (!targetId) {
 			await setPlaceholder(action);
 			return;
 		}
 
-		const lines = await fetchLines();
-		const line = lines.linesById[targetId];
+		const line = linesById[targetId];
 		if (!line) {
 			await setPlaceholder(action);
 			return;
@@ -78,7 +100,7 @@ export class VscsLineAction extends SingletonAction<LineSettings> {
 		const label = formatLabel(line);
 		const color = chooseColor(line);
 		const svg = makeSvg(label, color);
-		await action.setTitle(label);
+		await action.setTitle("");
 		await action.setImage(`data:image/svg+xml;base64,${btoa(svg)}`);
 	}
 
@@ -90,8 +112,8 @@ export class VscsLineAction extends SingletonAction<LineSettings> {
 	}
 }
 
-async function setPlaceholder(action: any) {
-	await action.setTitle("");
+async function setPlaceholder(action: any, label = "") {
+	await action.setTitle(label);
 	await action.setImage(makeBlankImage());
 }
 
@@ -99,39 +121,81 @@ function getContext(ev: { action?: any; context?: string }): string {
 	return (ev as any).action?.id || (ev as any).action?.context || (ev as any).context || "";
 }
 
-async function fetchLines(): Promise<{ linesById: Record<string, VscsLine> }> {
+async function fetchLines(): Promise<{ list: VscsLine[]; linesById: Record<string, VscsLine> }> {
 	const linesById: Record<string, VscsLine> = {};
+	let list: VscsLine[] = [];
 	try {
 		const state = await fetchState();
-		(state.lines ?? []).forEach((l) => (linesById[l.id] = l));
+		list = state.lines ?? [];
+		list.forEach((l) => (linesById[l.id] = l));
 	} catch {
 		// ignore fetch errors; return whatever we have
 	}
-	return { linesById };
+	return { list, linesById };
+}
+
+function resolveTargetId(settings: LineSettings, linesById: Record<string, VscsLine>): string | undefined {
+	const mode = resolveMode(settings);
+	if (mode === "manual") {
+		const manual = settings.targetId ?? undefined;
+		if (manual && linesById[manual]) return manual;
+		return undefined;
+	}
+	const slot = settings.autoAssignId ?? undefined;
+	if (!slot) return undefined;
+	const assigned = autoAssignments[slot];
+	if (assigned && linesById[assigned]) return assigned;
+	return undefined;
 }
 
 function stationCode(name: string): string {
-	const parts = name.split("_");
-	if (parts.length >= 2 && parts[1].length >= 3) return parts[1].substring(0, 3).toUpperCase();
-	if (parts.length >= 2 && parts[1].length >= 1) return (parts[1][0] + (parts[0][0] || "") + (parts[0][1] || "")).toUpperCase();
-	const match = name.match(/^([A-Za-z]{2})_?([A-Za-z])/);
-	if (match) return (match[1] + match[2]).toUpperCase();
-	return name.split("_")[0]?.slice(0, 3).toUpperCase() || name.toUpperCase();
+	const tokens = wordsFromName(name).map((w) => w.toUpperCase());
+	if (!tokens.length) return "";
+
+	// Pattern: prefix + location + role (e.g., ML MUN CTR).
+	if (tokens.length >= 3 && ROLE_TOKENS.has(tokens[tokens.length - 1])) {
+		const location = pickLocation(tokens);
+		const alias = LOCATION_ALIASES[location];
+		if (alias?.code) return alias.code;
+		return location.slice(0, 3);
+	}
+
+	// Ground-only naming (e.g., SY GND).
+	if (tokens.length === 2 && GROUND_TOKENS.has(tokens[1])) {
+		return `${tokens[0]} SMC`;
+	}
+
+	// Multi-word: use initials of first three words (e.g., Sydney Approach North -> SAN).
+	if (tokens.length >= 3) {
+		return tokens.slice(0, 3).map((w) => (w[0] || "")).join("");
+	}
+
+	if (tokens.length === 2) return `${tokens[0]} ${tokens[1]}`;
+	return (tokens[0] || "").slice(0, 3);
 }
 
 function friendlyName(name: string): string {
-	return name
-		.replace(/_/g, " ")
-		.split(" ")
-		.map((w) => (w.length ? w[0].toUpperCase() + w.slice(1).toLowerCase() : ""))
-		.join(" ")
-		.trim();
+	const tokens = wordsFromName(name).map((w) => w.toUpperCase());
+	if (!tokens.length) return "";
+
+	// If role present at end, show the location only.
+	if (tokens.length >= 2 && ROLE_TOKENS.has(tokens[tokens.length - 1])) {
+		const location = pickLocation(tokens);
+		return prettifyLocation(location, tokens[tokens.length - 1]);
+	}
+
+	// Ground: show "<Location> Gr".
+	if (tokens.length === 2 && GROUND_TOKENS.has(tokens[1])) {
+		return `${prettifyLocation(tokens[0])} Gr`;
+	}
+
+	return tokens.map((w) => toTitle(w)).join(" ").trim();
 }
 
 function formatLabel(line: VscsLine): string {
 	const station = stationCode(line.name);
 	const friendly = friendlyName(line.name);
-	return `${station}\n${friendly}\n${line.state}`;
+	return `${station}\n${friendly}`;
 }
 
 function chooseColor(line: VscsLine): string {
@@ -173,12 +237,14 @@ function chooseColor(line: VscsLine): string {
 
 function makeSvg(label: string, color: string): string {
 	const [line1 = "", line2 = "", line3 = ""] = label.split("\n");
+	const hasThird = !!line3;
+	const y2 = hasThird ? "58%" : "68%";
 	return `
 <svg xmlns="http://www.w3.org/2000/svg" width="144" height="144">
   <rect width="144" height="144" rx="12" ry="12" fill="${color}"/>
   <text x="50%" y="38%" fill="white" font-family="Arial" font-size="20" text-anchor="middle">${escapeXml(line1)}</text>
-  <text x="50%" y="58%" fill="white" font-family="Arial" font-size="18" text-anchor="middle">${escapeXml(line2)}</text>
-  <text x="50%" y="78%" fill="white" font-family="Arial" font-size="16" text-anchor="middle">${escapeXml(line3)}</text>
+  <text x="50%" y="${y2}" fill="white" font-family="Arial" font-size="18" text-anchor="middle">${escapeXml(line2)}</text>
+  ${hasThird ? `<text x="50%" y="78%" fill="white" font-family="Arial" font-size="16" text-anchor="middle">${escapeXml(line3)}</text>` : ""}
 </svg>`;
 }
 
@@ -228,4 +294,123 @@ function toColor(c: { r: number; g: number; b: number }): string {
 
 function clamp(v: number): number {
 	return Math.max(0, Math.min(255, Math.round(v)));
+}
+
+function wordsFromName(name: string): string[] {
+	return (name || "")
+		.replace(/[_-]+/g, " ")
+		.split(/\s+/)
+		.filter(Boolean);
+}
+
+function pickLocation(tokens: string[]): string {
+	if (!tokens.length) return "";
+	if (tokens.length >= 2 && ROLE_TOKENS.has(tokens[tokens.length - 1])) {
+		const candidate = tokens[tokens.length - 2];
+		if (candidate) return candidate;
+	}
+	return tokens[0] || "";
+}
+
+function prettifyLocation(location: string, role?: string): string {
+	if (!location) return "";
+	const alias = LOCATION_ALIASES[location];
+	if (alias?.label) return alias.label;
+	if (role && GROUND_TOKENS.has(role)) return `${toTitle(location)} Gr`;
+	return toTitle(location);
+}
+
+function toTitle(value: string): string {
+	if (!value) return "";
+	return value[0].toUpperCase() + value.slice(1).toLowerCase();
+}
+
+function resolveMode(settings: LineSettings | undefined): "auto" | "manual" {
+	if (settings?.mode === "auto" || settings?.mode === "manual") return settings.mode;
+	if (settings?.autoAssignId) return "auto";
+	return "auto";
+}
+
+function mergeSettings(current: LineSettings | undefined, incoming: Partial<LineSettings>): LineSettings {
+	const next: LineSettings = { ...(current ?? {}) };
+	if ("targetId" in incoming) next.targetId = incoming.targetId ?? null;
+	if ("autoAssignId" in incoming) next.autoAssignId = incoming.autoAssignId ?? null;
+	if ("mode" in incoming && (incoming.mode === "auto" || incoming.mode === "manual")) next.mode = incoming.mode;
+	return next;
+}
+
+function updateAutoAssignments(lines: VscsLine[]): void {
+	if (!lines || !Array.isArray(lines)) return;
+	const desiredSlots = getActiveAutoSlots();
+	const sortedSlots = [...desiredSlots].sort(sortSlots);
+	const orderedLines = orderLines(lines);
+
+	// Rebuild assignments fresh each cycle so hotlines stay grouped ahead of coldlines.
+	const newAssignments: Record<string, string> = {};
+	const used = new Set<string>();
+	for (const slot of sortedSlots) {
+		const nextLine = orderedLines.find((l) => !used.has(l.id));
+		if (!nextLine) break;
+		used.add(nextLine.id);
+		newAssignments[slot] = nextLine.id;
+	}
+
+	// Replace map in-place to avoid stale slots.
+	for (const key of Object.keys(autoAssignments)) delete autoAssignments[key];
+	for (const [slot, lineId] of Object.entries(newAssignments)) {
+		autoAssignments[slot] = lineId;
+	}
+}
+
+function getActiveAutoSlots(): string[] {
+	const slots = new Set<string>();
+	Object.values(settingsByContext).forEach((s) => {
+		if (resolveMode(s) !== "auto") return;
+		const slot = (s.autoAssignId ?? "").toString().trim();
+		if (slot) slots.add(slot);
+	});
+	return [...slots];
+}
+
+function orderLines(lines: VscsLine[]): VscsLine[] {
+	return [...lines].sort((a, b) => {
+		const diff = linePriority(a) - linePriority(b);
+		if (diff !== 0) return diff;
+		return friendlyName(a.name).localeCompare(friendlyName(b.name));
+	});
+}
+
+function linePriority(line: VscsLine): number {
+	const type = (line.type || "").toLowerCase();
+	if (type.includes("hot")) return 0;
+	if (type.includes("cold")) return 1;
+	return 2;
+}
+
+function sortSlots(a: string, b: string): number {
+	const na = parseInt(a, 10);
+	const nb = parseInt(b, 10);
+	const aNum = !Number.isNaN(na);
+	const bNum = !Number.isNaN(nb);
+	if (aNum && bNum && na !== nb) return na - nb;
+	if (aNum && !bNum) return -1;
+	if (!aNum && bNum) return 1;
+	return a.localeCompare(b);
+}
+
+async function sendOptionsToPi(ev: SendToPluginEvent<any, LineSettings>): Promise<void> {
+	const sender = (ev.action as any)?.sendToPropertyInspector as ((payload: unknown) => Promise<void>) | undefined;
+	if (!sender) return;
+	try {
+		const { list } = await fetchLines();
+		const options = orderLines(list).map((line) => ({
+			id: line.id,
+			label: `${stationCode(line.name)} - ${friendlyName(line.name)}`,
+			detail: [line.type || "Line"].filter(Boolean).join(" / "),
+			type: line.type || "Line"
+		}));
+		await sender.call(ev.action, { type: "options", options });
+	} catch {
+		// ignore option push errors
+	}
 }

@@ -8,39 +8,78 @@
 			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 			margin: 12px;
 		}
+		.subtle {
+			color: #888;
+			font-size: 12px;
+			margin-top: 4px;
+		}
 		#status {
 			color: #888;
 			font-size: 12px;
 			margin-top: 6px;
 		}
+		#hint {
+			color: #bbb;
+			font-size: 12px;
+			margin-top: 6px;
+			line-height: 1.4;
+		}
+		.hidden { display: none; }
 	</style>
 </head>
 <body>
-	<sdpi-item label="Line Assignment">
+	<sdpi-item label="Mode">
+		<select id="modeSelect" class="sdpi-item-value">
+			<option value="auto">Auto-detect (stable ID)</option>
+			<option value="manual">Manual pick</option>
+		</select>
+	</sdpi-item>
+	<sdpi-item label="Auto ID" id="autoRow">
+		<select id="slotSelect" class="sdpi-item-value">
+			<option value="">Select ID...</option>
+		</select>
+	</sdpi-item>
+	<sdpi-item label="Manual Line" id="manualRow">
 		<select id="lineSelect" class="sdpi-item-value">
 			<option value="">Select line...</option>
 		</select>
 	</sdpi-item>
+	<div id="hint">Auto-detect uses an ID so the same button keeps its place as VSCS lines appear/disappear. Give each auto line button a unique ID. Switch to Manual to lock this button to a specific detected line.</div>
 	<div id="status"></div>
 
 	<script>
 	(() => {
+		const AUTO_IDS = Array.from({ length: 20 }, (_, i) => (i + 1).toString());
+		const ROLE_TOKENS = new Set(["CTR", "CENTER", "CENTRE", "APP", "APCH", "APPROACH", "DEP", "DEPARTURE", "TWR", "TOWER", "ACC", "AREA"]);
+		const GROUND_TOKENS = new Set(["GND", "GROUND", "GRND"]);
+		const LOCATION_ALIASES = {
+			MUN: { code: "MUN", label: "Mungo" },
+			SY: { label: "Sydney" }
+		};
 		let uuid;
 		let websocket;
 		let actionInfo;
+		let currentSettings = {};
 		let options = [];
 		let fallbackTimer;
-		let selectEl;
+		let lineSelect;
+		let slotSelect;
+		let modeSelect;
 		let statusEl;
 
 		function ensureElements() {
-			selectEl = selectEl || document.getElementById("lineSelect");
+			lineSelect = lineSelect || document.getElementById("lineSelect");
+			slotSelect = slotSelect || document.getElementById("slotSelect");
+			modeSelect = modeSelect || document.getElementById("modeSelect");
 			statusEl = statusEl || document.getElementById("status");
 		}
 
 		function init() {
 			ensureElements();
-			selectEl.addEventListener("change", handleChange);
+			renderSlotOptions();
+			lineSelect.addEventListener("change", handleLineChange);
+			slotSelect.addEventListener("change", handleSlotChange);
+			modeSelect.addEventListener("change", handleModeChange);
 			setStatus("Waiting for Stream Deck...");
 		}
 
@@ -48,6 +87,7 @@
 			ensureElements();
 			uuid = inUuid;
 			actionInfo = JSON.parse(inActionInfo || "{}");
+			currentSettings = actionInfo?.payload?.settings || {};
 			websocket = new WebSocket(`ws://127.0.0.1:${port}`);
 
 			websocket.onopen = () => {
@@ -59,7 +99,8 @@
 			websocket.onmessage = handleMessage;
 			websocket.onerror = () => setStatus("Connection error. Check Stream Deck.");
 
-			applySettings(actionInfo?.payload?.settings);
+			renderSlotOptions();
+			applySettings(currentSettings);
 		};
 
 		document.addEventListener("DOMContentLoaded", init);
@@ -81,14 +122,43 @@
 			}
 		}
 
-		function handleChange(ev) {
+		function handleLineChange(ev) {
+			if (resolveMode(currentSettings) !== "manual") return;
 			const targetId = ev.target.value || null;
-			saveSettings({ targetId });
+			mergeAndSaveSettings({ targetId });
 			sendToPlugin({ type: "setTarget", targetId });
 		}
 
+		function handleSlotChange(ev) {
+			if (resolveMode(currentSettings) !== "auto") return;
+			const autoAssignId = ev.target.value || null;
+			const patch = autoAssignId ? { autoAssignId, targetId: null } : { autoAssignId };
+			if (autoAssignId && lineSelect) {
+				lineSelect.value = "";
+			}
+			mergeAndSaveSettings(patch);
+			sendToPlugin({ type: "setAutoAssign", autoAssignId });
+			setStatus(autoAssignId ? `Auto-detect armed on ID ${autoAssignId}.` : "");
+		}
+
+		function handleModeChange(ev) {
+			const mode = ev.target.value === "manual" ? "manual" : "auto";
+			const patch =
+				mode === "auto"
+					? { mode, targetId: null }
+					: { mode, autoAssignId: null };
+			mergeAndSaveSettings(patch);
+			if (mode === "auto" && slotSelect && !slotSelect.value) {
+				slotSelect.value = AUTO_IDS[0];
+				patch.autoAssignId = AUTO_IDS[0];
+				mergeAndSaveSettings(patch);
+			}
+			sendToPlugin({ type: "setMode", mode });
+			updateVisibility();
+		}
+
 		function requestOptions() {
-			setStatus("Loading VSCS lines…");
+			setStatus("Loading VSCS lines...");
 			sendToPlugin({ type: "requestOptions" });
 			if (fallbackTimer) clearTimeout(fallbackTimer);
 			fallbackTimer = setTimeout(loadFallbackOptions, 750);
@@ -112,8 +182,13 @@
 		}
 
 		function renderOptions() {
-			const current = selectEl.value || "";
-			selectEl.innerHTML = "";
+			const current = lineSelect.value || "";
+			lineSelect.innerHTML = "";
+
+			const placeholder = document.createElement("option");
+			placeholder.value = "";
+			placeholder.textContent = "Select line...";
+			lineSelect.appendChild(placeholder);
 
 			const seen = new Set();
 			options.forEach((opt) => {
@@ -121,24 +196,36 @@
 				seen.add(opt.id);
 				const el = document.createElement("option");
 				el.value = opt.id;
-				el.textContent = opt.detail ? `${opt.label} — ${opt.detail}` : opt.label;
-				selectEl.appendChild(el);
+				el.textContent = opt.detail ? `${opt.label} - ${opt.detail}` : opt.label;
+				lineSelect.appendChild(el);
 			});
 
-			const desired = (actionInfo?.payload?.settings?.targetId ?? current ?? "") || "";
-			selectEl.value = desired;
+			const desired = (currentSettings?.targetId ?? current ?? "") || "";
+			lineSelect.value = desired;
 		}
 
 		function applySettings(settings) {
+			currentSettings = settings || {};
 			const targetId = settings?.targetId ?? "";
-			if (selectEl) {
-				selectEl.value = targetId;
+			const autoAssignId = settings?.autoAssignId ?? "";
+			const mode = resolveMode(settings);
+			if (modeSelect) {
+				modeSelect.value = mode;
 			}
+			if (lineSelect) {
+				lineSelect.value = targetId;
+			}
+			if (slotSelect) {
+				slotSelect.value = autoAssignId;
+			}
+			renderSlotOptions();
+			updateVisibility();
 		}
 
-		function saveSettings(settings) {
+		function mergeAndSaveSettings(patch) {
+			currentSettings = { ...(currentSettings || {}), ...patch };
 			if (websocket && websocket.readyState === WebSocket.OPEN) {
-				websocket.send(JSON.stringify({ event: "setSettings", context: uuid, payload: settings }));
+				websocket.send(JSON.stringify({ event: "setSettings", context: uuid, payload: currentSettings }));
 			}
 		}
 
@@ -153,6 +240,35 @@
 			statusEl.textContent = text || "";
 		}
 
+		function renderSlotOptions() {
+			if (!slotSelect) return;
+			const current = slotSelect.value || "";
+			slotSelect.innerHTML = "";
+
+			const prompt = document.createElement("option");
+			prompt.value = "";
+			prompt.textContent = "Select ID...";
+			slotSelect.appendChild(prompt);
+
+			AUTO_IDS.forEach((id) => {
+				const el = document.createElement("option");
+				el.value = id;
+				el.textContent = `ID ${id}`;
+				slotSelect.appendChild(el);
+			});
+
+			const desired = (currentSettings?.autoAssignId ?? current ?? "") || "";
+			slotSelect.value = desired;
+		}
+
+		function updateVisibility() {
+			const mode = resolveMode(currentSettings);
+			const autoRow = document.getElementById("autoRow");
+			const manualRow = document.getElementById("manualRow");
+			if (autoRow) autoRow.classList.toggle("hidden", mode !== "auto");
+			if (manualRow) manualRow.classList.toggle("hidden", mode !== "manual");
+		}
+
 		function buildOptions(lines) {
 			return [...lines]
 				.sort(lineSorter)
@@ -161,7 +277,7 @@
 					return {
 						id: line.id,
 						label: `${station} - ${friendlyName(line.name)}`,
-						detail: [line.type || "Line", line.state || ""].filter(Boolean).join(" • "),
+						detail: [line.type || "Line"].filter(Boolean).join(" / "),
 						station,
 						type: line.type || "Line"
 					};
@@ -181,21 +297,68 @@
 		}
 
 		function stationCode(name) {
-			const parts = (name || "").split("_");
-			if (parts.length >= 2 && parts[1].length >= 3) return parts[1].substring(0, 3).toUpperCase();
-			if (parts.length >= 2 && parts[1].length >= 1) return (parts[1][0] + (parts[0][0] || "") + (parts[0][1] || "")).toUpperCase();
-			const match = name.match(/^([A-Za-z]{2})_?([A-Za-z])/);
-			if (match) return (match[1] + match[2]).toUpperCase();
-			return name.split("_")[0]?.slice(0, 3).toUpperCase() || name.toUpperCase();
+			const tokens = wordsFromName(name).map((w) => w.toUpperCase());
+			if (!tokens.length) return "";
+			if (tokens.length >= 3 && ROLE_TOKENS.has(tokens[tokens.length - 1])) {
+				const location = pickLocation(tokens);
+				const alias = LOCATION_ALIASES[location];
+				if (alias && alias.code) return alias.code;
+				return location.slice(0, 3);
+			}
+			if (tokens.length === 2 && GROUND_TOKENS.has(tokens[1])) {
+				return `${tokens[0]} SMC`;
+			}
+			if (tokens.length >= 3) return tokens.slice(0, 3).map((w) => (w[0] || "")).join("");
+			if (tokens.length === 2) return `${tokens[0]} ${tokens[1]}`;
+			return (tokens[0] || "").slice(0, 3);
 		}
 
 		function friendlyName(name) {
+			const tokens = wordsFromName(name).map((w) => w.toUpperCase());
+			if (!tokens.length) return "";
+			if (tokens.length >= 2 && ROLE_TOKENS.has(tokens[tokens.length - 1])) {
+				const location = pickLocation(tokens);
+				return prettifyLocation(location, tokens[tokens.length - 1]);
+			}
+			if (tokens.length === 2 && GROUND_TOKENS.has(tokens[1])) {
+				return `${prettifyLocation(tokens[0])} Gr`;
+			}
+			return tokens.map((w) => toTitle(w)).join(" ").trim();
+		}
+
+		function wordsFromName(name) {
 			return (name || "")
-				.replace(/_/g, " ")
-				.split(" ")
-				.map((w) => (w.length ? w[0].toUpperCase() + w.slice(1).toLowerCase() : ""))
-				.join(" ")
-				.trim();
+				.replace(/[_-]+/g, " ")
+				.split(/\s+/)
+				.filter(Boolean);
+		}
+
+		function resolveMode(settings) {
+			if (settings?.mode === "auto" || settings?.mode === "manual") return settings.mode;
+			if (settings?.autoAssignId) return "auto";
+			return "auto";
+		}
+
+		function pickLocation(tokens) {
+			if (!tokens.length) return "";
+			if (tokens.length >= 2 && ROLE_TOKENS.has(tokens[tokens.length - 1])) {
+				const candidate = tokens[tokens.length - 2];
+				if (candidate) return candidate;
+			}
+			return tokens[0] || "";
+		}
+
+		function prettifyLocation(location, role) {
+			if (!location) return "";
+			const alias = LOCATION_ALIASES[location];
+			if (alias && alias.label) return alias.label;
+			if (role && GROUND_TOKENS.has(role)) return `${toTitle(location)} Gr`;
+			return toTitle(location);
+		}
+
+		function toTitle(value) {
+			if (!value) return "";
+			return value[0].toUpperCase() + value.slice(1).toLowerCase();
 		}
 	})();
 	</script>
