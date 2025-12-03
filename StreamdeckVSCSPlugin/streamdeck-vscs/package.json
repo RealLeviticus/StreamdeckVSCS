@@ -2,7 +2,7 @@
     "scripts": {
         "build": "rollup -c",
         "watch": "rollup -c -w --watch.onEnd=\"streamdeck restart com.leviticus.streamdeck-vscs\"",
-        "package": "rollup -c && npx streamdeck pack com.leviticus.streamdeck-vscs.sdPlugin"
+        "package": "rollup -c && npx streamdeck pack com.leviticus.streamdeck-vscs.sdPlugin -f"
     },
     "type": "module",
     "devDependencies": {

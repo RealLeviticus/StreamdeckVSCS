@@ -77,7 +77,7 @@ export class VscsLineAction extends SingletonAction<LineSettings> {
 			clearInterval(pollers[ctx]);
 			delete pollers[ctx];
 		}
-		delete settingsByContext[ctx];
+		// Keep settings cached so auto-assign IDs from other pages still participate in ordering.
 		delete resolvedTargetsByContext[ctx];
 	}
 
