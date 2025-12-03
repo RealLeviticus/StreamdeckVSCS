@@ -5,7 +5,7 @@
 	"Actions": [
 		{
 			"Name": "VSCS Line",
-			"UUID": "com.chairservices.streamdeck-vscs.line",
+			"UUID": "com.leviticus.streamdeck-vscs.line",
 			"Icon": "imgs/actions/counter/icon",
 			"Tooltip": "Toggle a VSCS line (Hotline/Coldline/Monitor).",
 			"PropertyInspectorPath": "ui/vscs-line.html",
@@ -15,13 +15,14 @@
 			"States": [
 				{
 					"Image": "imgs/actions/counter/key",
-					"TitleAlignment": "middle"
+					"TitleAlignment": "middle",
+					"TitleColor": "#000060"
 				}
 			]
 		},
 		{
 			"Name": "VSCS Mute",
-			"UUID": "com.chairservices.streamdeck-vscs.toggle",
+			"UUID": "com.leviticus.streamdeck-vscs.toggle",
 			"Icon": "imgs/actions/counter/icon",
 			"Tooltip": "Toggle VSCS microphone mute.",
 			"Controllers": [
@@ -30,7 +31,8 @@
 			"States": [
 				{
 					"Image": "imgs/actions/counter/key",
-					"TitleAlignment": "middle"
+					"TitleAlignment": "middle",
+					"TitleColor": "#000060"
 				}
 			]
 		}
@@ -58,5 +60,5 @@
 		"Version": "20",
 		"Debug": "enabled"
 	},
-	"UUID": "com.chairservices.streamdeck-vscs"
+	"UUID": "com.leviticus.streamdeck-vscs"
 }

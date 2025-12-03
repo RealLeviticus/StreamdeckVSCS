@@ -5,7 +5,7 @@ type FrequencySettings = {
 	targetId?: string;
 };
 
-@action({ UUID: "com.chairservices.streamdeck-vscs.frequency" })
+@action({ UUID: "com.leviticus.streamdeck-vscs.frequency" })
 export class VscsFrequencyAction extends SingletonAction<FrequencySettings> {
 	override async onWillAppear(ev: WillAppearEvent<FrequencySettings>): Promise<void> {
 		await this.refreshTitle(ev);

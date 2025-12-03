@@ -3,7 +3,7 @@ import { fetchState, toggleSwitch } from "../bridge";
 
 const pollers = new Map<string, NodeJS.Timeout>();
 
-@action({ UUID: "com.chairservices.streamdeck-vscs.toggle" })
+@action({ UUID: "com.leviticus.streamdeck-vscs.toggle" })
 export class VscsToggleAction extends SingletonAction<Record<string, never>> {
 	override async onWillAppear(ev: WillAppearEvent<Record<string, never>>): Promise<void> {
 		await this.refresh(ev);
@@ -64,7 +64,9 @@ function makeMuteSvg(muted: boolean): string {
 	return `
 <svg xmlns="http://www.w3.org/2000/svg" width="144" height="144">
   <rect x="6" y="6" width="132" height="132" rx="16" ry="16" fill="${bg}" stroke="${border}" stroke-width="8"/>
-  <text x="50%" y="50%" fill="${textPrimary}" font-family="Arial" font-size="30" font-weight="bold" text-anchor="middle" dominant-baseline="central">${line1}</text>
-  <text x="50%" y="74%" fill="${textSecondary}" font-family="Arial" font-size="24" font-weight="bold" text-anchor="middle" dominant-baseline="central">${line2}</text>
+  <g transform="translate(72 72)">
+    <text x="0" y="-8" fill="${textPrimary}" font-family="Arial" font-size="30" font-weight="bold" text-anchor="middle" dominant-baseline="middle">${line1}</text>
+    <text x="0" y="18" fill="${textSecondary}" font-family="Arial" font-size="24" font-weight="bold" text-anchor="middle" dominant-baseline="middle">${line2}</text>
+  </g>
 </svg>`;
 }

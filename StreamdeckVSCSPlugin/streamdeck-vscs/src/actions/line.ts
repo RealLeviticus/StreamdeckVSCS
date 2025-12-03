@@ -26,8 +26,10 @@ const pollers: Record<string, NodeJS.Timeout> = {};
 const settingsByContext: Record<string, LineSettings> = {};
 const resolvedTargetsByContext: Record<string, string | undefined> = {};
 const autoAssignments: Record<string, string> = {}; // slot -> line id
+const TITLE_COLOR = "#000060"; // desired vatSys-like deep blue
+const TITLE_COLOR_HI = "#FFFFFF"; // bright fallback for dark flashing
 
-@action({ UUID: "com.chairservices.streamdeck-vscs.line" })
+@action({ UUID: "com.leviticus.streamdeck-vscs.line" })
 export class VscsLineAction extends SingletonAction<LineSettings> {
 	override async onWillAppear(ev: WillAppearEvent<LineSettings>): Promise<void> {
 		const ctx = getContext(ev);
@@ -99,7 +101,8 @@ export class VscsLineAction extends SingletonAction<LineSettings> {
 
 		const label = formatLabel(line);
 		const color = chooseColor(line);
-		const svg = makeSvg(label, color);
+		const textColor = pickTextColor(line);
+		const svg = makeSvg(label, color, textColor);
 		await action.setTitle("");
 		await action.setImage(`data:image/svg+xml;base64,${btoa(svg)}`);
 	}
@@ -112,8 +115,8 @@ export class VscsLineAction extends SingletonAction<LineSettings> {
 	}
 }
 
-async function setPlaceholder(action: any, label = "") {
-	await action.setTitle(label);
+async function setPlaceholder(action: any) {
+	await action.setTitle("");
 	await action.setImage(makeBlankImage());
 }
 
@@ -199,52 +202,56 @@ function formatLabel(line: VscsLine): string {
 }
 
 function chooseColor(line: VscsLine): string {
-	const baseHot = "#EBEB00";
-	const baseCold = "#00EBEB";
+	const baseHot = "#EBEB00"; // idle hotline
+	const baseCold = "#00c8d8"; // idle coldline
 	const baseMonitor = "#4ca66a";
-	const activeGreen = "#3cb371"; // matches the in-app "open" feel
-	const purpleRing = "#8f42d1";
-
+	const activeGreen = "#00c900";
+	const coldPurple = "#5B447A";
 	const state = (line.state || "").toLowerCase();
 	const type = (line.type || "").toLowerCase();
-	const isActive = state === "open" || state === "outbound" || state === "inbound";
-	const base = type === "hotline" ? baseHot : type === "coldline" ? baseCold : baseMonitor;
+	const isHotActive = state === "open" || state === "outbound" || state === "inbound";
+	const isColdActive = state === "open";
+	const isColdPending = state === "inbound" || state === "outbound";
 
-	// Coldline rings purple until picked up.
-	if (type === "coldline" && state === "inbound") {
-		const flash = (Date.now() % 800) < 400;
-		return flash ? lighten(purpleRing, 0.2) : darken(purpleRing, 0.2);
+	if (type === "coldline") {
+		if (isColdPending) {
+			const flash = (Date.now() % 800) < 400;
+			return flash ? coldPurple : baseCold;
+		}
+		if (isColdActive) return coldPurple;
+		return baseCold;
 	}
 
-	// Hotlines go green as soon as they go active.
-	if (type === "hotline" && isActive) {
-		return activeGreen;
+	if (type === "hotline") {
+		if (isHotActive) return activeGreen;
+		return baseHot;
 	}
 
-	// Coldlines go green once answered/active.
-	if (type === "coldline" && (state === "open" || state === "outbound")) {
-		return activeGreen;
-	}
-
-	// Other lines still flash when inbound.
+	// other lines / monitors
 	if (state === "inbound") {
 		const flash = (Date.now() % 1000) < 500;
-		return flash ? lighten(base, 0.2) : darken(base, 0.15);
+		return flash ? baseCold : darken(baseCold, 0.2);
 	}
-
-	return base;
+	return baseMonitor;
 }
 
-function makeSvg(label: string, color: string): string {
+function makeSvg(label: string, color: string, textColor: string): string {
 	const [line1 = "", line2 = "", line3 = ""] = label.split("\n");
 	const hasThird = !!line3;
-	const y2 = hasThird ? "58%" : "68%";
+	const font1 = 26;
+	const font2 = 20;
+	const font3 = 16;
+	const y1 = hasThird ? -12 : -6;
+	const y2 = hasThird ? 12 : 14;
+	const y3 = 36;
 	return `
 <svg xmlns="http://www.w3.org/2000/svg" width="144" height="144">
   <rect width="144" height="144" rx="12" ry="12" fill="${color}"/>
-  <text x="50%" y="38%" fill="white" font-family="Arial" font-size="20" text-anchor="middle">${escapeXml(line1)}</text>
-  <text x="50%" y="${y2}" fill="white" font-family="Arial" font-size="18" text-anchor="middle">${escapeXml(line2)}</text>
-  ${hasThird ? `<text x="50%" y="78%" fill="white" font-family="Arial" font-size="16" text-anchor="middle">${escapeXml(line3)}</text>` : ""}
+  <g transform="translate(72 72)">
+    <text x="0" y="${y1}" fill="${textColor}" font-family="Tahoma, Segoe UI, Arial, sans-serif" font-size="${font1}" font-weight="700" text-anchor="middle" dominant-baseline="middle">${escapeXml(line1)}</text>
+    <text x="0" y="${y2}" fill="${textColor}" font-family="Tahoma, Segoe UI, Arial, sans-serif" font-size="${font2}" font-weight="700" text-anchor="middle" dominant-baseline="middle">${escapeXml(line2)}</text>
+    ${hasThird ? `<text x="0" y="${y3}" fill="${textColor}" font-family="Tahoma, Segoe UI, Arial, sans-serif" font-size="${font3}" font-weight="700" text-anchor="middle" dominant-baseline="middle">${escapeXml(line3)}</text>` : ""}
+  </g>
 </svg>`;
 }
 
@@ -325,6 +332,14 @@ function toTitle(value: string): string {
 	return value[0].toUpperCase() + value.slice(1).toLowerCase();
 }
 
+function pickTextColor(line: VscsLine): string {
+	const state = (line.state || "").toLowerCase();
+	const type = (line.type || "").toLowerCase();
+	const isColdPending = type === "coldline" && (state === "inbound" || state === "outbound");
+	const isColdActive = type === "coldline" && state === "open";
+	if (isColdPending || isColdActive) return TITLE_COLOR_HI;
+	return TITLE_COLOR;
+}
 function resolveMode(settings: LineSettings | undefined): "auto" | "manual" {
 	if (settings?.mode === "auto" || settings?.mode === "manual") return settings.mode;
 	if (settings?.autoAssignId) return "auto";
