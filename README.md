@@ -4,7 +4,7 @@
 - Install with the bundled `StreamdeckVSCSInstaller.exe` (copies the vatSys plugin and triggers the Stream Deck install prompt).
 - In Stream Deck, add the “VSCS Line” action to a key.
 - Each line button can be set to **Auto-detect** or **Manual pick**:
-  - **Auto-detect + ID**: Assign a unique numeric ID (1–20) to each button. As VSCS lines appear, the plugin maps one line per ID (hotlines first, then coldlines). This keeps buttons stable even when lines change order.
+  - **Auto-detect + ID**: Assign a unique numeric ID (1–20) to each button. As VSCS lines appear, the plugin maps one line per ID (hotlines first, then coldlines). Each ID is only used once, so you won’t get duplicate lines on different buttons, and the mapping stays stable even if VSCS reorders or reconnects lines.
   - **Manual**: Pick a specific line from the detected list. The button is locked to that line only.
 - Buttons reflect VSCS status without opening the VSCS window:
   - Hotlines: idle yellow; active green.
